@@ -1,0 +1,472 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  sample-iac-vpc-resources
+  
+  This is a sample of SAM or Cloudformation template for setting up VPC, Subnets, Internet Gateways, NAT Gateways, VPC 
+  Endpoint and Security Groups that would most probably having the same lifecycle.
+
+  If your EC2 instances or Lambda functions do not need to access to the internet from created private subnets and only 
+  need to access aws services within the same aws account, you may consider to remove EIP and NAT Gateway and use VPC 
+  Endpoint instead.
+
+Parameters:
+  VpcCidr:
+    Type: String
+    Description: IP Address range for the VPC to be created
+    MinLength: '9'
+    MaxLength: '18'
+    Default: 174.1.0.0/16
+    AllowedPattern: '(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})/(\d{1,2})'
+    ConstraintDescription: must be a valid IP CIDR range of the form x.x.x.x/x.
+    AllowedValues:
+      - 174.1.0.0/16
+
+Resources:
+# VPC, Subnets, Routes, Gateways
+  VpcIac:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: !Ref VpcCidr
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      InstanceTenancy: default
+      Tags:
+        - Key: Name
+          Value: VPC
+
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+        - Key: Name
+          Value: IG For CF IaC
+  AttachGateway:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref VpcIac
+      InternetGatewayId: !Ref InternetGateway
+
+  PUBSubnet01:
+    Type: AWS::EC2::Subnet
+    Properties:
+      CidrBlock: 174.1.0.0/24
+      MapPublicIpOnLaunch: true
+      AvailabilityZone: ap-southeast-1a
+      VpcId: !Ref VpcIac
+      Tags:
+        - Key: Name
+          Value: PUBSub-AZ1A
+  PUBSubnet02:
+    Type: AWS::EC2::Subnet
+    Properties:
+      CidrBlock: 174.1.1.0/24
+      MapPublicIpOnLaunch: true
+      AvailabilityZone: ap-southeast-1b
+      VpcId: !Ref VpcIac
+      Tags:
+        - Key: Name
+          Value: PUBSub-AZ1B
+  PUBSubnet03:
+    Type: AWS::EC2::Subnet
+    Properties:
+      CidrBlock: 174.1.2.0/24
+      MapPublicIpOnLaunch: true
+      AvailabilityZone: ap-southeast-1c
+      VpcId: !Ref VpcIac
+      Tags:
+        - Key: Name
+          Value: PUBSub-AZ1C
+  PUBRouteTable01:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VpcIac
+      Tags:
+        - Key: Name
+          Value: PUBSubnet01 RouteTable
+  PUBRouteTable02:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VpcIac
+      Tags:
+        - Key: Name
+          Value: PUBSubnet02 RouteTable
+  PUBRouteTable03:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VpcIac
+      Tags:
+        - Key: Name
+          Value: PUBSubnet03 RouteTable
+  PUBSubnetRoute01:
+    Type: AWS::EC2::Route
+    DependsOn: AttachGateway
+    Properties:
+      RouteTableId: !Ref PUBRouteTable01
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref InternetGateway
+  PUBSubnetRoute02:
+    Type: AWS::EC2::Route
+    DependsOn: AttachGateway
+    Properties:
+      RouteTableId: !Ref PUBRouteTable02
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref InternetGateway
+  PUBSubnetRoute03:
+    Type: AWS::EC2::Route
+    DependsOn: AttachGateway
+    Properties:
+      RouteTableId: !Ref PUBRouteTable03
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref InternetGateway
+  PUBRouteTableAssociationPUBSubnet01:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PUBSubnet01
+      RouteTableId: !Ref PUBRouteTable01
+  PUBRouteTableAssociationPUBSubnet02:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PUBSubnet02
+      RouteTableId: !Ref PUBRouteTable02
+  PUBRouteTableAssociationPUBSubnet03:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PUBSubnet03
+      RouteTableId: !Ref PUBRouteTable03
+
+  NAT01EIP:
+    Type: AWS::EC2::EIP
+    DependsOn: AttachGateway
+    Properties:
+      Domain: vpc
+  NAT02EIP:
+    Type: AWS::EC2::EIP
+    DependsOn: AttachGateway
+    Properties:
+      Domain: vpc
+  NAT03EIP:
+    Type: AWS::EC2::EIP
+    DependsOn: AttachGateway
+    Properties:
+      Domain: vpc
+  NATGateway1:
+    DependsOn: AttachGateway
+    Type: AWS::EC2::NatGateway
+    Properties:
+      AllocationId: !GetAtt NAT01EIP.AllocationId
+      SubnetId: !Ref PUBSubnet01
+  NATGateway2:
+    DependsOn: AttachGateway
+    Type: AWS::EC2::NatGateway
+    Properties:
+      AllocationId: !GetAtt NAT02EIP.AllocationId
+      SubnetId: !Ref PUBSubnet02
+  NATGateway3:
+    DependsOn: AttachGateway
+    Type: AWS::EC2::NatGateway
+    Properties:
+      AllocationId: !GetAtt NAT03EIP.AllocationId
+      SubnetId: !Ref PUBSubnet03
+
+  PRVSubnet01:
+    Type: AWS::EC2::Subnet
+    Properties:
+      CidrBlock: 174.1.6.0/24
+      MapPublicIpOnLaunch: false
+      AvailabilityZone: ap-southeast-1a
+      VpcId: !Ref VpcIac
+      Tags:
+        - Key: Name
+          Value: PRVSub-AZ1A
+  PRVSubnet02:
+    Type: AWS::EC2::Subnet
+    Properties:
+      CidrBlock: 174.1.7.0/24
+      MapPublicIpOnLaunch: false
+      AvailabilityZone: ap-southeast-1b
+      VpcId: !Ref VpcIac
+      Tags:
+        - Key: Name
+          Value: PRVSub-AZ1B
+  PRVSubnet03:
+    Type: AWS::EC2::Subnet
+    Properties:
+      CidrBlock: 174.1.8.0/24
+      MapPublicIpOnLaunch: false
+      AvailabilityZone: ap-southeast-1c
+      VpcId: !Ref VpcIac
+      Tags:
+        - Key: Name
+          Value: PRVSub-AZ1C
+  PRVRouteTable01:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VpcIac
+      Tags:
+        - Key: Name
+          Value: PRVSubnet01 RouteTable
+  PRVRouteTable02:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VpcIac
+      Tags:
+        - Key: Name
+          Value: PRVSubnet02 RouteTable
+  PRVRouteTable03:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VpcIac
+      Tags:
+        - Key: Name
+          Value: PRVSubnet03 RouteTable
+  PRVRoute01:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref PRVRouteTable01
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId: !Ref NATGateway1
+  PRVRoute02:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref PRVRouteTable02
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId: !Ref NATGateway2
+  PRVRoute03:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref PRVRouteTable03
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId: !Ref NATGateway3
+  PRVRouteTableAssociationPRVSubnet01:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PRVSubnet01
+      RouteTableId: !Ref PRVRouteTable01
+  PRVRouteTableAssociationPRVSubnet02:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PRVSubnet02
+      RouteTableId: !Ref PRVRouteTable02
+  PRVRouteTableAssociationPRVSubnet03:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PRVSubnet03
+      RouteTableId: !Ref PRVRouteTable03
+
+# VPC Endpoints to AWS Resources
+  S3VPCEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      RouteTableIds:
+        - !Ref PRVRouteTable01
+        - !Ref PRVRouteTable02
+        - !Ref PRVRouteTable03
+      ServiceName: !Sub com.amazonaws.${AWS::Region}.s3
+      VpcEndpointType: Gateway
+      VpcId: !Ref VPCCFIaaC
+  DynamoDBVPCEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      RouteTableIds:
+        - !Ref PRVRouteTable01
+        - !Ref PRVRouteTable02
+        - !Ref PRVRouteTable03
+      ServiceName: !Sub com.amazonaws.${AWS::Region}.dynamodb
+      VpcEndpointType: Gateway
+      VpcId: !Ref VPCCFIaaC
+  SecretsManagerVPCEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      PrivateDnsEnabled: true
+      SecurityGroupIds:
+        - !Ref SaaSDefaultSG
+      ServiceName: !Sub com.amazonaws.${AWS::Region}.secretsmanager
+      SubnetIds:
+        - !Ref PRVSubnet01
+        - !Ref PRVSubnet02
+        - !Ref PRVSubnet03
+      VpcEndpointType: Interface
+      VpcId: !Ref VPCCFIaaC
+  LambdaVPCEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      PrivateDnsEnabled: true
+      SecurityGroupIds:
+        - !Ref SaaSDefaultSG
+      ServiceName: !Sub com.amazonaws.${AWS::Region}.lambda
+      SubnetIds:
+        - !Ref PRVSubnet01
+        - !Ref PRVSubnet02
+        # - !Ref PRVSubnet03  (Not Currently Supported)
+      VpcEndpointType: Interface
+      VpcId: !Ref VPCCFIaaC
+  RDSDataVPCEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      PrivateDnsEnabled: true
+      SecurityGroupIds:
+        - !Ref SaaSDefaultSG
+      ServiceName: !Sub com.amazonaws.${AWS::Region}.rds-data
+      SubnetIds:
+        - !Ref PRVSubnet01
+        - !Ref PRVSubnet02
+        - !Ref PRVSubnet03
+      VpcEndpointType: Interface
+      VpcId: !Ref VPCCFIaaC
+  CloudformationVPCEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      PrivateDnsEnabled: true
+      SecurityGroupIds:
+        - !Ref SaaSDefaultSG
+      ServiceName: !Sub com.amazonaws.${AWS::Region}.cloudformation
+      SubnetIds:
+        - !Ref PRVSubnet01
+        - !Ref PRVSubnet02
+        - !Ref PRVSubnet03
+      VpcEndpointType: Interface
+      VpcId: !Ref VPCCFIaaC
+  CodeBuildVPCEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      PrivateDnsEnabled: true
+      SecurityGroupIds:
+        - !Ref SaaSDefaultSG
+      ServiceName: !Sub com.amazonaws.${AWS::Region}.codebuild
+      SubnetIds:
+        - !Ref PRVSubnet01
+        - !Ref PRVSubnet02
+        - !Ref PRVSubnet03
+      VpcEndpointType: Interface
+      VpcId: !Ref VPCCFIaaC
+  CodeCommitVPCEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      PrivateDnsEnabled: true
+      SecurityGroupIds:
+        - !Ref SaaSDefaultSG
+      ServiceName: !Sub com.amazonaws.${AWS::Region}.codecommit
+      SubnetIds:
+        - !Ref PRVSubnet01
+        - !Ref PRVSubnet02
+        - !Ref PRVSubnet03
+      VpcEndpointType: Interface
+      VpcId: !Ref VPCCFIaaC
+  CodeDeployVPCEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      PrivateDnsEnabled: true
+      SecurityGroupIds:
+        - !Ref SaaSDefaultSG
+      ServiceName: !Sub com.amazonaws.${AWS::Region}.codedeploy
+      SubnetIds:
+        - !Ref PRVSubnet01
+        - !Ref PRVSubnet02
+        - !Ref PRVSubnet03
+      VpcEndpointType: Interface
+      VpcId: !Ref VPCCFIaaC
+  CodePipelineVPCEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      PrivateDnsEnabled: true
+      SecurityGroupIds:
+        - !Ref SaaSDefaultSG
+      ServiceName: !Sub com.amazonaws.${AWS::Region}.codepipeline
+      SubnetIds:
+        - !Ref PRVSubnet01
+        - !Ref PRVSubnet02
+        - !Ref PRVSubnet03
+      VpcEndpointType: Interface
+      VpcId: !Ref VPCCFIaaC
+
+# Security Groups
+  DefaultSG:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Default Allow All Security Group
+      GroupName: DefaultSG
+      VpcId: !Ref VpcIac
+      SecurityGroupIngress:
+        - IpProtocol: '-1'
+          CidrIp: 0.0.0.0/0
+  BastionSG:
+    Type: AWS::EC2::SecurityGroup
+    Properties: 
+      GroupDescription: Bastion Host Access Security Group
+      GroupName: BastionSG
+      VpcId: !Ref VpcIac
+  AuroraRDSSG:
+    Type: AWS::EC2::SecurityGroup
+    Properties: 
+      GroupDescription: Aurora RDS Access Security Group
+      GroupName: AuroraRDSSG
+      SecurityGroupIngress: 
+        - IpProtocol: 'tcp'
+          SourceSecurityGroupId: !Ref BastionSG
+          FromPort: 22
+          ToPort: 22
+          Description: Bastion SSH Access
+        - IpProtocol: 'tcp'
+          SourceSecurityGroupId: !Ref BastionSG
+          FromPort: 3306
+          ToPort: 3306
+          Description: Aurora MySQL Access
+        - IpProtocol: 'tcp'
+          SourceSecurityGroupId: !Ref BastionSG
+          FromPort: 5432
+          ToPort: 5432
+          Description: Aurora PosgreSQL Access
+      VpcId: !Ref VpcIac
+
+Outputs:
+  VpcID:
+    Description: VPC ID of VpcIac
+    Value: !Ref VpcIac
+    Export:
+      Name: VPC
+  PUBSubnet01ID:
+    Description: Subnet ID of the public subnet 1
+    Value: !Ref PUBSubnet01
+    Export:
+      Name: PUBSubnet01
+  PUBSubnet02ID:
+    Description: Subnet ID of the public subnet 2
+    Value: !Ref PUBSubnet02
+    Export:
+      Name: PUBSubnet02
+  PUBSubnet03ID:
+    Description: Subnet ID of the public subnet 3
+    Value: !Ref PUBSubnet03
+    Export:
+      Name: PUBSubnet03
+  PRVSubnet01ID:
+    Description: Subnet ID of the Private subnet
+    Value: !Ref PRVSubnet01
+    Export:
+      Name: PRVSubnet01
+  PRVSubnet02ID:
+    Description: Subnet ID of the Private subnet
+    Value: !Ref PRVSubnet02
+    Export:
+      Name: PRVSubnet02
+  PRVSubnet03ID:
+    Description: Subnet ID of the Private subnet
+    Value: !Ref PRVSubnet03
+    Export:
+      Name: PRVSubnet03
+  DefaultSGID:
+    Description: Default Security Group ID
+    Value: !Ref DefaultSG
+    Export:
+      Name: DefaultSG
+  BastionSGID:
+    Description: Bastion Security Group ID
+    Value: !Ref BastionSG
+    Export:
+      Name: BastionSG
+  AuroraRDSSGID:
+    Description: Aurora RDS Security Group ID
+    Value: !Ref AuroraRDSSGID
+    Export:
+      Name: AuroraRDSSGID

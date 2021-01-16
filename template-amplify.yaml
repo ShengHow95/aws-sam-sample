@@ -1,0 +1,99 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  sample-iac-amplify-resources
+  This is a sample of SAM or Cloudformation template for setting up amplify resources.
+
+Parameters:
+  FrontendRepository:
+    Type: String
+    Default: amplify-app-frontend
+
+Resources:
+# Codecommit Repo
+  AmplifyRepo:
+    Type: AWS::CodeCommit::Repository
+    Properties:
+      RepositoryName: !Ref FrontendRepository
+      RepositoryDescription: This is a repository for Sample Project.
+  
+# Amplify App
+  AmplifyApp:
+    Type: AWS::Amplify::App
+    Properties:
+      Description: Amplify App
+      Name: Amplify-App
+      Repository: !GetAtt AmplifyRepo.CloneUrlHttp
+      IAMServiceRole: !GetAtt AmplifyRole.Arn
+      EnvironmentVariables: 
+        - Name: Stack
+          Value: !Ref AWS::StackName
+      CustomRules:
+        - Source: /<*>
+          Status: 404-200
+          Target: /index.html
+        - Source: </^[^.]+$|\.(?!(css|gif|ico|jpg|js|png|txt|svg|woff|ttf|map|json)$)([^.]+$)/>
+          Status: 200
+          Target: /index.html
+      BuildSpec: |-
+        version: 1
+        frontend:
+          phases:
+            preBuild:
+              commands:
+                - npm ci
+            build:
+              commands:
+                - echo "VUE_APP_NAME=$Name" >> .env
+                - npm run build
+          artifacts:
+            baseDirectory: dist
+            files:
+              - '**/*'
+          cache:
+            paths:
+              - node_modules/**/*
+      Tags: 
+        - Key: "Stack"
+          Value: !Ref AWS::StackName
+  AmplifyBranch:
+    Type: AWS::Amplify::Branch
+    Properties:
+      BranchName: master
+      AppId: !GetAtt AmplifyApp.AppId
+      Description: Master Branch
+      EnableAutoBuild: true
+  AmplifyRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - amplify.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      Policies:
+        - PolicyName: AmplifyPolicy
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action: "amplify:*"
+                Resource: "*"
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AWSCodeCommitFullAccess
+
+Outputs:
+  AmplifyRepoCloneUrl:
+    Description: Amplify Repo Clone Url
+    Value: !GetAtt AmplifyRepo.CloneUrlHttp
+    Export:
+      Name: AmplifyRepoCloneUrl
+  AmplifyAppUrl:
+    Description: Amplify App Url
+    Value: !GetAtt AmplifyApp.DefaultDomain
+    Export:
+      Name: AmplifyAppUrl

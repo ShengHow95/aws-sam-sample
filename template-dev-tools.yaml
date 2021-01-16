@@ -1,0 +1,259 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  sample-iac-lambda-apigateway-resources
+  This is a sample of SAM or Cloudformation template for setting up codecommit, codebuild, codepipeline and
+  event watching and triggering (Cloudwatch Events) resources.
+
+Parameters:
+  BackendRepository:
+    Type: String
+    Default: app-backend
+
+Resources:
+# S3 Bucket
+  S3Bucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+    Properties:
+      BucketName: sam-sample-bucket
+
+# Codecommit Repo
+  AppBackendRepo:
+    Type: AWS::CodeCommit::Repository
+    Properties:
+      RepositoryName: !Ref BackendRepository
+      RepositoryDescription: This is a repository for Sample Project.
+
+# CodeBuild & CodePipeline
+  AppCodeBuild:
+      Type: AWS::CodeBuild::Project
+      Properties:
+        Name: AppCodeBuild
+        Description: AppCodeBuild
+        ServiceRole: !GetAtt AppCodeBuildRole.Arn
+        Artifacts:
+          Type: CODEPIPELINE
+        Environment:
+          Type: LINUX_CONTAINER
+          ComputeType: BUILD_GENERAL1_SMALL
+          Image: aws/codebuild/amazonlinux2-x86_64-standard:3.0
+          - Name: STACK_NAME
+            Type: PLAINTEXT
+            Value: !Ref AWS::StackName
+          - Name: BACKEND_REPO
+            Type: PLAINTEXT
+            Value: !Ref BackendRepository
+        Source:
+          Type: CODEPIPELINE
+          BuildSpec: buildspec.yml
+  AppCodeBuildRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - codebuild.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      Policies:
+        - PolicyName: CodeBuildPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: '*'
+                Resource: '*'
+  
+  AppCodePipeline:
+    Type: AWS::CodePipeline::Pipeline
+    Properties:
+      Name: AppCodePipeline
+      RoleArn: !GetAtt AppCodePipelineRole.Arn
+      ArtifactStore:
+        Type: S3
+        Location: !Ref S3Bucket
+      Stages:
+        - Name: Source
+          Actions:
+            - Name: Source
+              RunOrder: 1
+              ActionTypeId:
+                Category: Source
+                Owner: AWS
+                Version: 1
+                Provider: CodeCommit
+              Configuration:
+                PollForSourceChanges: false
+                BranchName: master
+                RepositoryName: !GetAtt AppBackendRepo.CloneUrlHttp
+              OutputArtifacts:
+                - Name: SourceArtifact
+        - Name: Build
+          Actions:
+            - Name: SAM-Build-Deploy
+              RunOrder: 2
+              InputArtifacts:
+                - Name: SourceArtifact
+              ActionTypeId:
+                Category: Build
+                Owner: AWS
+                Version: 1
+                Provider: CodeBuild
+              Configuration:
+                ProjectName: !Ref AppCodeBuild
+  AppCodePipelineCompleteNotification:
+    Type: AWS::CodeStarNotifications::NotificationRule
+    Properties:
+      DetailType: FULL
+      EventTypeIds:
+        - codepipeline-pipeline-pipeline-execution-succeeded
+      Name: sam-deploy-completes
+      Resource: !Sub arn:aws:codepipeline:${AWS::Region}:${AWS::AccountId}:${AppCodePipeline}
+      Status: ENABLED
+      Targets:
+        - TargetAddress: !Ref AppCodePipelineSNSCompletionTopic
+          TargetType: SNS
+  AppCodePipelineRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - codepipeline.amazonaws.com
+                - cloudformation.amazonaws.com
+                - codebuild.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: CodePipelinePolicy
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action: "*"
+                Resource: "*"
+
+  AppCodePipelineCloudWatchEventRule:
+    Type: AWS::Events::Rule
+    Properties:
+      EventPattern:
+        source:
+          - aws.codecommit
+        detail-type:
+          - CodeCommit Repository State Change
+        resources:
+          - !Sub arn:aws:codecommit:${AWS::Region}:${AWS::AccountId}:${AppBackendRepo}
+        detail:
+          event:
+            - referenceCreated
+            - referenceUpdated
+          referenceType:
+            - branch
+          referenceName:
+            - master
+      Targets:
+        - Arn: !Sub arn:aws:codepipeline:${AWS::Region}:${AWS::AccountId}:${AppCodePipeline}
+          RoleArn: !GetAtt AppCodePipelineCloudWatchEventRole.Arn
+          Id: app-codepipeline
+  AppCodePipelineCloudWatchEventRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - events.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: cwe-pipeline-execution
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action: codepipeline:StartPipelineExecution
+                Resource: !Sub arn:aws:codepipeline:${AWS::Region}:${AWS::AccountId}:${AppCodePipeline}
+  
+  AppCodePipelineSNSCompletionTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: AppCodePipelineCompletionTopic
+  AppCodePipelineSNSCompletionTopicPolicy:
+    Type: AWS::SNS::TopicPolicy
+    Properties:
+      PolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Sid: app-sns-statement
+            Effect: Allow
+            Action:
+              - sns:publish
+            Resource: !Ref AppCodePipelineSNSCompletionTopic
+            Principal:
+              Service:
+                - codestar-notifications.amazonaws.com
+      Topics:
+        - !Ref AppCodePipelineSNSCompletionTopic
+  AppCodePipelineSNSCompletionTopicSubscription:
+    Type: AWS::SNS::Subscription
+    Properties:
+      Endpoint: !GetAtt SamDeployCompleteFunction.Arn
+      Protocol: lambda
+      Region: !Ref AWS::Region
+      TopicArn: !Ref AppCodePipelineSNSCompletionTopic
+
+# Lambda Function
+  SamDeployCompleteFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Description: Dummy Lambda Invoked after SAM Deploy Completion
+      CodeUri: function/sam-deploy-complete/
+      Handler: app.lambda_handler
+      Role: !GetAtt SamDeployCompleteRole.Arn
+      VpcConfig:
+        SecurityGroupIds:
+          - !ImportValue BastionSG
+        SubnetIds:
+          - !ImportValue PRVSubnet01
+          - !ImportValue PRVSubnet02
+          - !ImportValue PRVSubnet03
+      Events:
+        SaaSCompleteEvent:
+          Type: SNS
+          Properties:
+            Topic: !Ref AppCodePipelineSNSCompletionTopic
+            Region: !Ref AWS::Region
+  SamDeployCompleteRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - lambda.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaRole
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole
+
+Outputs:
+  S3BucketName:
+    Description: S3 Bucket Name
+    Value: !Ref S3Bucket
+    Export:
+      Name: S3Bucket
+  AppBackendRepoCloneUrl:
+    Description: App Backend Repo Clone Url
+    Value: !GetAtt AppBackendRepo.CloneUrlHttp
+    Export:
+      Name: AppBackendRepoCloneUrl

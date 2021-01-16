@@ -1,0 +1,123 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  sample-iac-lambda-apigateway-resources
+  This is a sample of SAM or Cloudformation template for setting up lambda and api gateway resources.
+
+Globals:
+  Function:
+    Layers:
+    - !Ref DependencyLayer
+    - !Ref HelperLayer
+    Runtime: python3.8
+    MemorySize: 512
+    Tracing: Active
+    Timeout: 30
+  Api:
+    Cors:
+      AllowMethods: "'DELETE,GET,POST,PUT'"
+      AllowHeaders: "'Authorization,Content-Type'"
+      AllowOrigin: "'*'"
+
+Parameters:
+  S3BucketName:
+    Type: String
+    Default: test-sam-bucket
+
+Resources:
+# Lambda Layers
+  DependencyLayer:
+    Type: AWS::Serverless::LayerVersion
+    Properties:
+      LayerName: DependencyLayer
+      ContentUri: layer/dependency/
+      CompatibleRuntimes:
+        - python3.8
+      LicenseInfo: MIT
+      RetentionPolicy: Retain
+    Metadata:
+      BuildMethod: python3.8
+  HelperLayer:
+    Type: AWS::Serverless::LayerVersion
+    Properties:
+      LayerName: HelperLayer
+      ContentUri: layer/helper/
+      CompatibleRuntimes:
+        - python3.8
+      LicenseInfo: MIT
+      RetentionPolicy: Retain
+    Metadata:
+      BuildMethod: python3.8
+
+# API Gateway
+  RestApi:
+    Type: AWS::Serverless::Api
+    Properties:
+      Name: !Sub ${AWS::StackName}-Api
+      TracingEnabled: true
+      StageName: dev
+      DefinitionBody:
+        'Fn::Transform':
+          Name: AWS::Include
+          Parameters:
+            Location: !Sub s3://${S3BucketName}/${AWS::StackName}/openapi-spec.yaml
+
+# Lambda Functions and Roles
+  TestFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: function/test/
+      Handler: app.lambda_handler
+      Role: !GetAtt TestFunctionRole.Arn
+      VpcConfig:
+        SecurityGroupIds:
+          - !ImportValue BastionSG
+        SubnetIds:
+          - !ImportValue PRVSubnet01
+          - !ImportValue PRVSubnet02
+          - !ImportValue PRVSubnet03
+      Environment:
+        Variables:
+          DDBTable: !ImportValue DDBTable
+      Events:
+        TestFunction:
+          Type: Api
+          Properties:
+            RestApiId: !Ref RestApi
+            Path: /test
+            Method: POST
+  TestFunctionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - lambda.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonDynamoDBFullAccess
+        - arn:aws:iam::aws:policy/SecretsManagerReadWrite
+        - arn:aws:iam::aws:policy/AWSXrayWriteOnlyAccess
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaRole
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole
+
+Outputs:
+  DependencyLayerID:
+    Description: Dependency Layer ID
+    Value: !Ref DependencyLayer
+    Export:
+      Name: DependencyLayer
+  HelperLayerID:
+    Description: Helper Layer ID
+    Value: !Ref SaaSHelperLayer
+    Export:
+      Name: HelperLayer
+  ApiGatewayEndpoint:
+    Description: API Gateway Endpoint URL
+    Value: !Sub https://${RestApi}.execute-api.${AWS::Region}.amazonaws.com/dev
+    Export:
+      Name: ApiGateEndpoint

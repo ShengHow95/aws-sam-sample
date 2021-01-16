@@ -1,0 +1,111 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  sample-iac-databases-resources
+  This is a sample of SAM or Cloudformation template for setting up S3 Bucket, Aurora RDS, Secrets and DynamoDB resources.
+
+Resources:
+# S3 Bucket
+  S3Bucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+    Properties:
+      BucketName: sam-sample-bucket
+
+# DynamoDB Table
+  DDBTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: sample-table
+      AttributeDefinitions:
+      - AttributeName: pk
+        AttributeType: S
+      KeySchema:
+      - AttributeName: sk
+        KeyType: HASH
+      BillingMode: PAY_PER_REQUEST
+      TimeToLiveSpecification:
+        AttributeName: ttl
+        Enabled: true
+
+# Aurora RDS & Secrets
+  AuroraRDSSubnetGroup:
+    Type: AWS::RDS::DBSubnetGroup
+    Properties:
+      DBSubnetGroupDescription: Aurora RDS Private Subnet Group
+      DBSubnetGroupName: aurora-rds-subnet-group
+      SubnetIds: 
+        - !ImportValue PRVSubnet01    # Import from VPC Template
+        - !ImportValue PRVSubnet02    # Import from VPC Template
+        - !ImportValue PRVSubnet03    # Import from VPC Template
+  AuroraRDSCluster:
+    Type: AWS::RDS::DBCluster
+    Properties:
+      DBClusterIdentifier: !Sub ${AWS::StackName}
+      DBClusterParameterGroupName: default.aurora5.6
+      DBSubnetGroupName: !Ref AuroraRDSSubnetGroup
+      DeletionProtection: false
+      Engine: aurora
+      EngineMode: serverless
+      EnableHttpEndpoint: true
+      MasterUsername: !Sub '{{resolve:secretsmanager:${AuroraRDSSecret}:SecretString:username}}'
+      MasterUserPassword: !Sub '{{resolve:secretsmanager:${AuroraRDSSecret}:SecretString:password}}'
+      Port: 3306
+      ScalingConfiguration:
+        AutoPause: false
+        MaxCapacity: 64
+        MinCapacity: 1
+      StorageEncrypted: true
+      VpcSecurityGroupIds:
+        - !ImportValue AuroraRDSSG    # Import from VPC Template
+    DependsOn:
+      - AuroraRDSSubnetGroup
+      - AuroraRDSSecret
+  AuroraRDSSecret:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Description: Master Secrets
+      GenerateSecretString:
+        ExcludeCharacters: '"@/\'
+        GenerateStringKey: password
+        PasswordLength: 16
+        SecretStringTemplate: '{ "username":"admin" }'
+      Name: AuroraRDSMasterSecrets
+      Tags:
+        - Key: "name"
+          Value: "admin"
+  AuroraRDSSecretAttachment:
+    Type: AWS::SecretsManager::SecretTargetAttachment
+    Properties:
+      SecretId:
+        Ref: AuroraRDSSecret
+      TargetId:
+        Ref: AuroraRDSCluster
+      TargetType: AWS::RDS::DBCluster
+
+Outputs:
+  S3BucketName:
+    Description: S3 Bucket Name
+    Value: !Ref S3Bucket
+    Export:
+      Name: S3Bucket
+  DDBTableName:
+    Description: DynamoDB Table Name
+    Value: !Ref DDBTable
+    Export:
+      Name: DDBTable
+  AuroraRDSEndpoint:
+    Description: Aurora RDS Endpoint
+    Value: !GetAtt AuroraRDSCluster.Endpoint.Address
+    Export:
+      Name: AuroraRDSEndpoint
+  AuroraRDSArn:
+    Description: Aurora RDS Arn
+    Value: !Sub arn:aws:rds:${AWS::Region}:${AWS::AccountId}:cluster:${AuroraRDSCluster}
+    Export:
+      Name: AuroraRDSArn
+  AuroraRDSSecretsArn:
+    Description: Aurora RDS Secrets Arn
+    Value: !Ref AuroraRDSSecret
+    Export:
+      Name: AuroraRDSSecret

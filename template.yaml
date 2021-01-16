@@ -1,0 +1,988 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  saas-enrolment-resources
+  This is the Sample template that can be used to create an SaaS Enrolment Page
+
+Globals:
+  Function:
+    Layers:
+    - !Ref SaaSDependencyLayer
+    - !Ref SaaSHelperLayer
+    Runtime: python3.8
+    MemorySize: 512
+    Tracing: Active
+    Timeout: 30
+  Api:
+    Cors:
+      AllowMethods: "'DELETE,GET,POST,PUT'"
+      AllowHeaders: "'Authorization,Content-Type'"
+      AllowOrigin: "'*'"
+
+Parameters:
+  SaaSEnrolmentS3BucketName:
+    Type: String
+    Default: saas-enrolment
+  FrontendRepository:
+    Type: String
+    Default: saas-enrolment-frontend
+  BackendRepository:
+    Type: String
+    Default: saas-enrolment-backend
+  VPCCIDR:
+    Type: String
+    Description: IP Address range for the VPN connected VPC
+    MinLength: '9'
+    MaxLength: '18'
+    Default: 174.1.0.0/16
+    AllowedPattern: '(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})/(\d{1,2})'
+    ConstraintDescription: must be a valid IP CIDR range of the form x.x.x.x/x.
+    AllowedValues:
+      - 174.1.0.0/16
+
+Resources:
+# VPC, Subnets, Routes, Gateways
+  VPCCFIaaC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: !Ref VPCCIDR
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      InstanceTenancy: default
+      Tags:
+        - Key: Name
+          Value: Ifyrd-VPC
+
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+        - Key: Name
+          Value: IG For CF IaaC
+  AttachGateway:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref VPCCFIaaC
+      InternetGatewayId: !Ref InternetGateway
+
+  PUBSubnet01:
+    Type: AWS::EC2::Subnet
+    Properties:
+      CidrBlock: 174.1.0.0/24
+      MapPublicIpOnLaunch: true
+      AvailabilityZone: ap-southeast-1a
+      VpcId: !Ref VPCCFIaaC
+      Tags:
+        - Key: Name
+          Value: PublicSub-AZ1A
+  PUBSubnet02:
+    Type: AWS::EC2::Subnet
+    Properties:
+      CidrBlock: 174.1.1.0/24
+      MapPublicIpOnLaunch: true
+      AvailabilityZone: ap-southeast-1b
+      VpcId: !Ref VPCCFIaaC
+      Tags:
+        - Key: Name
+          Value: PublicSub-AZ1B
+  PUBSubnet03:
+    Type: AWS::EC2::Subnet
+    Properties:
+      CidrBlock: 174.1.2.0/24
+      MapPublicIpOnLaunch: true
+      AvailabilityZone: ap-southeast-1c
+      VpcId: !Ref VPCCFIaaC
+      Tags:
+        - Key: Name
+          Value: PublicSub-AZ1C
+  PUBRouteTable01:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPCCFIaaC
+      Tags:
+        - Key: Name
+          Value: PUB RT
+  PUBRouteTable02:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPCCFIaaC
+      Tags:
+        - Key: Name
+          Value: PUB RT
+  PUBRouteTable03:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPCCFIaaC
+      Tags:
+        - Key: Name
+          Value: PUB RT
+  PUBSubnetRoute01:
+    Type: AWS::EC2::Route
+    DependsOn: AttachGateway
+    Properties:
+      RouteTableId: !Ref PUBRouteTable01
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref InternetGateway
+  PUBSubnetRoute02:
+    Type: AWS::EC2::Route
+    DependsOn: AttachGateway
+    Properties:
+      RouteTableId: !Ref PUBRouteTable02
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref InternetGateway
+  PUBSubnetRoute03:
+    Type: AWS::EC2::Route
+    DependsOn: AttachGateway
+    Properties:
+      RouteTableId: !Ref PUBRouteTable03
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref InternetGateway
+  PUBRouteTableAssociationPUBSubnet01:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PUBSubnet01
+      RouteTableId: !Ref PUBRouteTable01
+  PUBRouteTableAssociationPUBSubnet02:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PUBSubnet02
+      RouteTableId: !Ref PUBRouteTable02
+  PUBRouteTableAssociationPUBSubnet03:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PUBSubnet03
+      RouteTableId: !Ref PUBRouteTable03
+
+  NAT01EIP:
+    Type: AWS::EC2::EIP
+    DependsOn: AttachGateway
+    Properties:
+      Domain: vpc
+  NAT02EIP:
+    Type: AWS::EC2::EIP
+    DependsOn: AttachGateway
+    Properties:
+      Domain: vpc
+  NAT03EIP:
+    Type: AWS::EC2::EIP
+    DependsOn: AttachGateway
+    Properties:
+      Domain: vpc
+  NATGateway1:
+    DependsOn: AttachGateway
+    Type: AWS::EC2::NatGateway
+    Properties:
+      AllocationId: !GetAtt NAT01EIP.AllocationId
+      SubnetId: !Ref PUBSubnet01
+  NATGateway2:
+    DependsOn: AttachGateway
+    Type: AWS::EC2::NatGateway
+    Properties:
+      AllocationId: !GetAtt NAT02EIP.AllocationId
+      SubnetId: !Ref PUBSubnet02
+  NATGateway3:
+    DependsOn: AttachGateway
+    Type: AWS::EC2::NatGateway
+    Properties:
+      AllocationId: !GetAtt NAT03EIP.AllocationId
+      SubnetId: !Ref PUBSubnet03
+
+  PRVSubnet01:
+    Type: AWS::EC2::Subnet
+    Properties:
+      CidrBlock: 174.1.6.0/24
+      MapPublicIpOnLaunch: false
+      AvailabilityZone: ap-southeast-1a
+      VpcId: !Ref VPCCFIaaC
+      Tags:
+        - Key: Name
+          Value: PRVSub-AZ1A
+  PRVSubnet02:
+    Type: AWS::EC2::Subnet
+    Properties:
+      CidrBlock: 174.1.7.0/24
+      MapPublicIpOnLaunch: false
+      AvailabilityZone: ap-southeast-1b
+      VpcId: !Ref VPCCFIaaC
+      Tags:
+        - Key: Name
+          Value: PRVSub-AZ1B
+  PRVSubnet03:
+    Type: AWS::EC2::Subnet
+    Properties:
+      CidrBlock: 174.1.8.0/24
+      MapPublicIpOnLaunch: false
+      AvailabilityZone: ap-southeast-1c
+      VpcId: !Ref VPCCFIaaC
+      Tags:
+        - Key: Name
+          Value: PRVSub-AZ1C
+  PRVRouteTable01:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPCCFIaaC
+      Tags:
+        - Key: Name
+          Value: PRV RT
+  PRVRouteTable02:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPCCFIaaC
+      Tags:
+        - Key: Name
+          Value: PRV RT
+  PRVRouteTable03:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPCCFIaaC
+      Tags:
+        - Key: Name
+          Value: PRV RT
+  PRVRoute01:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref PRVRouteTable01
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId: !Ref NATGateway1
+  PRVRoute02:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref PRVRouteTable02
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId: !Ref NATGateway2
+  PRVRoute03:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref PRVRouteTable03
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId: !Ref NATGateway3
+  PRVRouteTableAssociationPRVSubnet01:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PRVSubnet01
+      RouteTableId: !Ref PRVRouteTable01
+  PRVRouteTableAssociationPRVSubnet02:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PRVSubnet02
+      RouteTableId: !Ref PRVRouteTable02
+  PRVRouteTableAssociationPRVSubnet03:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PRVSubnet03
+      RouteTableId: !Ref PRVRouteTable03
+
+# Security Groups
+  SaaSDefaultSG:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: SaaS Allow All Security Group
+      GroupName: SaaSDefaultSG
+      VpcId: !Ref VPCCFIaaC
+      SecurityGroupIngress:
+        - IpProtocol: '-1'
+          CidrIp: 0.0.0.0/0
+  SaaSBastionSG:
+    Type: AWS::EC2::SecurityGroup
+    Properties: 
+      GroupDescription: SaaS Bastion Host Access Security Group
+      GroupName: SaaSBastionSG
+      VpcId: !Ref VPCCFIaaC
+  SaaSDatabaseSG:
+    Type: AWS::EC2::SecurityGroup
+    Properties: 
+      GroupDescription: SaaS Database Access Security Group
+      GroupName: SaaSDatabaseSG
+      SecurityGroupIngress: 
+        - IpProtocol: 'tcp'
+          SourceSecurityGroupId: !Ref SaaSBastionSG
+          FromPort: 22
+          ToPort: 22
+          Description: SaaS Bastion SSH Access
+        - IpProtocol: 'tcp'
+          SourceSecurityGroupId: !Ref SaaSBastionSG
+          FromPort: 3306
+          ToPort: 3306
+          Description: Aurora Access
+      VpcId: !Ref VPCCFIaaC
+
+# VPC Endpoints to AWS Resources
+  S3VPCEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      RouteTableIds:
+        - !Ref PRVRouteTable01
+        - !Ref PRVRouteTable02
+        - !Ref PRVRouteTable03
+      ServiceName: !Sub com.amazonaws.${AWS::Region}.s3
+      VpcEndpointType: Gateway
+      VpcId: !Ref VPCCFIaaC
+  DynamoDBVPCEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      RouteTableIds:
+        - !Ref PRVRouteTable01
+        - !Ref PRVRouteTable02
+        - !Ref PRVRouteTable03
+      ServiceName: !Sub com.amazonaws.${AWS::Region}.dynamodb
+      VpcEndpointType: Gateway
+      VpcId: !Ref VPCCFIaaC
+  SecretsManagerVPCEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      PrivateDnsEnabled: true
+      SecurityGroupIds:
+        - !Ref SaaSDefaultSG
+      ServiceName: !Sub com.amazonaws.${AWS::Region}.secretsmanager
+      SubnetIds:
+        - !Ref PRVSubnet01
+        - !Ref PRVSubnet02
+        - !Ref PRVSubnet03
+      VpcEndpointType: Interface
+      VpcId: !Ref VPCCFIaaC
+  LambdaVPCEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      PrivateDnsEnabled: true
+      SecurityGroupIds:
+        - !Ref SaaSDefaultSG
+      ServiceName: !Sub com.amazonaws.${AWS::Region}.lambda
+      SubnetIds:
+        - !Ref PRVSubnet01
+        - !Ref PRVSubnet02
+        # - !Ref PRVSubnet03  (Not Currently Supported)
+      VpcEndpointType: Interface
+      VpcId: !Ref VPCCFIaaC
+  RDSDataVPCEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      PrivateDnsEnabled: true
+      SecurityGroupIds:
+        - !Ref SaaSDefaultSG
+      ServiceName: !Sub com.amazonaws.${AWS::Region}.rds-data
+      SubnetIds:
+        - !Ref PRVSubnet01
+        - !Ref PRVSubnet02
+        - !Ref PRVSubnet03
+      VpcEndpointType: Interface
+      VpcId: !Ref VPCCFIaaC
+  CloudformationVPCEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      PrivateDnsEnabled: true
+      SecurityGroupIds:
+        - !Ref SaaSDefaultSG
+      ServiceName: !Sub com.amazonaws.${AWS::Region}.cloudformation
+      SubnetIds:
+        - !Ref PRVSubnet01
+        - !Ref PRVSubnet02
+        - !Ref PRVSubnet03
+      VpcEndpointType: Interface
+      VpcId: !Ref VPCCFIaaC
+  CodeBuildVPCEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      PrivateDnsEnabled: true
+      SecurityGroupIds:
+        - !Ref SaaSDefaultSG
+      ServiceName: !Sub com.amazonaws.${AWS::Region}.codebuild
+      SubnetIds:
+        - !Ref PRVSubnet01
+        - !Ref PRVSubnet02
+        - !Ref PRVSubnet03
+      VpcEndpointType: Interface
+      VpcId: !Ref VPCCFIaaC
+  CodeCommitVPCEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      PrivateDnsEnabled: true
+      SecurityGroupIds:
+        - !Ref SaaSDefaultSG
+      ServiceName: !Sub com.amazonaws.${AWS::Region}.codecommit
+      SubnetIds:
+        - !Ref PRVSubnet01
+        - !Ref PRVSubnet02
+        - !Ref PRVSubnet03
+      VpcEndpointType: Interface
+      VpcId: !Ref VPCCFIaaC
+  CodeDeployVPCEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      PrivateDnsEnabled: true
+      SecurityGroupIds:
+        - !Ref SaaSDefaultSG
+      ServiceName: !Sub com.amazonaws.${AWS::Region}.codedeploy
+      SubnetIds:
+        - !Ref PRVSubnet01
+        - !Ref PRVSubnet02
+        - !Ref PRVSubnet03
+      VpcEndpointType: Interface
+      VpcId: !Ref VPCCFIaaC
+  CodePipelineVPCEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      PrivateDnsEnabled: true
+      SecurityGroupIds:
+        - !Ref SaaSDefaultSG
+      ServiceName: !Sub com.amazonaws.${AWS::Region}.codepipeline
+      SubnetIds:
+        - !Ref PRVSubnet01
+        - !Ref PRVSubnet02
+        - !Ref PRVSubnet03
+      VpcEndpointType: Interface
+      VpcId: !Ref VPCCFIaaC
+
+# RDS Database & Secrets
+  SaaSDatabaseSubnetGroup:
+    Type: AWS::RDS::DBSubnetGroup
+    Properties:
+      DBSubnetGroupDescription: SaaS Database Private Subnet Group
+      DBSubnetGroupName: saas-db-subnet-group
+      SubnetIds: 
+        - !Ref PRVSubnet01
+        - !Ref PRVSubnet02
+        - !Ref PRVSubnet03
+  SaaSDatabaseCluster:
+    Type: AWS::RDS::DBCluster
+    Properties:
+      DBClusterIdentifier: !Sub ${AWS::StackName}
+      DBClusterParameterGroupName: default.aurora5.6
+      DBSubnetGroupName: !Ref SaaSDatabaseSubnetGroup
+      DeletionProtection: false
+      Engine: aurora
+      EngineMode: serverless
+      EnableHttpEndpoint: true
+      MasterUsername: !Sub '{{resolve:secretsmanager:${SaaSDatabaseSecret}:SecretString:username}}'
+      MasterUserPassword: !Sub '{{resolve:secretsmanager:${SaaSDatabaseSecret}:SecretString:password}}'
+      Port: 3306
+      ScalingConfiguration:
+        AutoPause: false
+        MaxCapacity: 64
+        MinCapacity: 1
+      StorageEncrypted: true
+      VpcSecurityGroupIds: 
+        - !Ref SaaSDatabaseSG
+    DependsOn:
+      - SaaSDatabaseSubnetGroup
+      - SaaSDatabaseSecret
+  SaaSDatabaseSecret:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Description: Master Secrets
+      GenerateSecretString:
+        ExcludeCharacters: '"@/\'
+        GenerateStringKey: password
+        PasswordLength: 16
+        SecretStringTemplate: 
+          !Join
+          - ','
+          - - '{ "username":"admin"'
+            - !Sub '"s3Bucket":"${SaaSEnrolmentS3BucketName}" }'
+      Name: SaaSDBMasterSecrets
+      Tags:
+        - Key: "name"
+          Value: "admin"
+  SaaSDatabaseSecretAttachment:
+    Type: AWS::SecretsManager::SecretTargetAttachment
+    Properties:
+      SecretId:
+        Ref: SaaSDatabaseSecret
+      TargetId:
+        Ref: SaaSDatabaseCluster
+      TargetType: AWS::RDS::DBCluster
+
+# DynamoDB Table
+  SaaSTenantTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: saas-tenant-table
+      AttributeDefinitions:
+      - AttributeName: TenantId
+        AttributeType: S
+      KeySchema:
+      - AttributeName: TenantId
+        KeyType: HASH
+      BillingMode: PAY_PER_REQUEST
+      TimeToLiveSpecification:
+        AttributeName: ttl
+        Enabled: true
+
+# Lambda Layers
+  SaaSDependencyLayer:
+    Type: AWS::Serverless::LayerVersion
+    Properties:
+      LayerName: DependencyLayer
+      ContentUri: layer/dependency/
+      CompatibleRuntimes:
+        - python3.8
+      LicenseInfo: MIT
+      RetentionPolicy: Retain
+    Metadata:
+      BuildMethod: python3.8
+  SaaSHelperLayer:
+    Type: AWS::Serverless::LayerVersion
+    Properties:
+      LayerName: HelperLayer
+      ContentUri: layer/helper/
+      CompatibleRuntimes:
+        - python3.8
+      LicenseInfo: MIT
+      RetentionPolicy: Retain
+    Metadata:
+      BuildMethod: python3.8
+
+# API Gateway
+  SaaSRestApi:
+    Type: AWS::Serverless::Api
+    Properties:
+      Name: !Sub SaaS-${AWS::StackName}-Api
+      TracingEnabled: true
+      StageName: dev
+      DefinitionBody:
+        'Fn::Transform':
+          Name: AWS::Include
+          Parameters:
+            Location: !Sub s3://${SaaSEnrolmentS3BucketName}/${AWS::StackName}/openapi-spec.yaml
+
+# Lambda Functions and Roles
+  TestFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: function/test/
+      Handler: app.lambda_handler
+      Role: !GetAtt TestFunctionRole.Arn
+      VpcConfig:
+        SecurityGroupIds:
+          - !Ref SaaSBastionSG
+        SubnetIds:
+          - !Ref PRVSubnet01
+          - !Ref PRVSubnet02
+          - !Ref PRVSubnet03
+      Environment:
+        Variables:
+          DDBTable: !Ref SaaSTenantTable
+      Events:
+        TestFunction:
+          Type: Api
+          Properties:
+            RestApiId: !Ref RestApi
+            Path: /test
+            Method: POST
+  TestFunctionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - lambda.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonDynamoDBFullAccess
+        - arn:aws:iam::aws:policy/SecretsManagerReadWrite
+        - arn:aws:iam::aws:policy/AWSXrayWriteOnlyAccess
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaRole
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole
+
+  SamDeployCompleteFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Description: Dummy Lambda Invoked after SAM Deploy Completion
+      CodeUri: function/sam-deploy-complete/
+      Handler: app.lambda_handler
+      Role: !GetAtt SamDeployCompleteRole.Arn
+      VpcConfig:
+        SecurityGroupIds:
+          - !Ref SaaSBastionSG
+        SubnetIds:
+          - !Ref PRVSubnet01
+          - !Ref PRVSubnet02
+          - !Ref PRVSubnet03
+      Events:
+        SaaSCompleteEvent:
+          Type: SNS
+          Properties:
+            Topic: !Ref SaaSSNSCompletionTopic
+            Region: !Ref AWS::Region
+  SamDeployCompleteRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - lambda.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaRole
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole
+
+# CodeBuild & CodePipeline
+  SaaSCodeBuild:
+      Type: AWS::CodeBuild::Project
+      Properties:
+        Name: SaaSCodeBuild
+        Description: SaaSCodeBuild
+        ServiceRole: !GetAtt SaaSCodeBuildRole.Arn
+        Artifacts:
+          Type: CODEPIPELINE
+        Environment:
+          Type: LINUX_CONTAINER
+          ComputeType: BUILD_GENERAL1_SMALL
+          Image: aws/codebuild/amazonlinux2-x86_64-standard:3.0
+          EnvironmentVariables:
+          - Name: BUCKET_NAME
+            Type: PLAINTEXT
+            Value: !Ref SaaSEnrolmentS3BucketName
+          - Name: STACK_NAME
+            Type: PLAINTEXT
+            Value: !Ref AWS::StackName
+          - Name: BACKEND_REPO
+            Type: PLAINTEXT
+            Value: !Ref BackendRepository
+          - Name: FRONTEND_REPO
+            Type: PLAINTEXT
+            Value: !Ref FrontendRepository
+        Source:
+          Type: CODEPIPELINE
+          BuildSpec: buildspec.yml
+  SaaSCodeBuildRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - codebuild.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      Policies:
+        - PolicyName: SaaSCodeBuildPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:*
+                  - ec2:*
+                  - iam:*
+                  - rds:*
+                  - sns:*
+                  - logs:*
+                  - xray:*
+                  - lambda:*
+                  - amplify:*
+                  - dynamodb:*
+                  - codebuild:*
+                  - apigateway:*
+                  - cloudwatch:*
+                  - codecommit:*
+                  - cloudformation:*
+                  - secretsmanager:*
+                Resource: '*'
+  
+  SaaSCodePipeline:
+    Type: AWS::CodePipeline::Pipeline
+    DependsOn: SaaSDatabaseCluster
+    Properties:
+      Name: SaaSCodePipeline
+      RoleArn: !GetAtt SaaSCodePipelineRole.Arn
+      ArtifactStore:
+        Type: S3
+        Location: !Ref SaaSEnrolmentS3BucketName
+      Stages:
+        - Name: Source
+          Actions:
+            - Name: SaaS-Source
+              RunOrder: 1
+              ActionTypeId:
+                Category: Source
+                Owner: AWS
+                Version: 1
+                Provider: CodeCommit
+              Configuration:
+                PollForSourceChanges: false
+                BranchName: master
+                RepositoryName: !Ref BackendRepository
+              OutputArtifacts:
+                - Name: SourceArtifact
+        - Name: Build
+          Actions:
+            - Name: SaaS-SAM-Build-Deploy
+              RunOrder: 2
+              InputArtifacts:
+                - Name: SourceArtifact
+              ActionTypeId:
+                Category: Build
+                Owner: AWS
+                Version: 1
+                Provider: CodeBuild
+              Configuration:
+                ProjectName: !Ref SaaSCodeBuild
+  SaaSCodePipelineCompleteNotification:
+    Type: AWS::CodeStarNotifications::NotificationRule
+    Properties:
+      DetailType: FULL
+      EventTypeIds:
+        - codepipeline-pipeline-pipeline-execution-succeeded
+      Name: saas-sam-deploy-completes
+      Resource: !Sub arn:aws:codepipeline:${AWS::Region}:${AWS::AccountId}:${SaaSCodePipeline}
+      Status: ENABLED
+      Targets:
+        - TargetAddress: !Ref SaaSSNSCompletionTopic
+          TargetType: SNS
+  SaaSCodePipelineRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - codepipeline.amazonaws.com
+                - cloudformation.amazonaws.com
+                - codebuild.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: SaaSCodePipelinePolicy
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action: "*"
+                Resource: "*"
+
+  SaaSCodePipelineCloudWatchEventRule:
+    Type: AWS::Events::Rule
+    Properties:
+      EventPattern:
+        source:
+          - aws.codecommit
+        detail-type:
+          - CodeCommit Repository State Change
+        resources:
+          - !Sub arn:aws:codecommit:${AWS::Region}:${AWS::AccountId}:${BackendRepository}
+        detail:
+          event:
+            - referenceCreated
+            - referenceUpdated
+          referenceType:
+            - branch
+          referenceName:
+            - master
+      Targets:
+        - Arn: !Sub arn:aws:codepipeline:${AWS::Region}:${AWS::AccountId}:${SaaSCodePipeline}
+          RoleArn: !GetAtt SaaSCodePipelineCloudWatchEventRole.Arn
+          Id: saas-codepipeline
+  SaaSCodePipelineCloudWatchEventRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - events.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: cwe-pipeline-execution
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action: codepipeline:StartPipelineExecution
+                Resource: !Sub arn:aws:codepipeline:${AWS::Region}:${AWS::AccountId}:${SaaSCodePipeline}
+  
+  SaaSSNSCompletionTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: SaaSCompletionTopic
+  SaaSSNSCompletionTopicPolicy:
+    Type: AWS::SNS::TopicPolicy
+    Properties:
+      PolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Sid: saas-sns-statement
+            Effect: Allow
+            Action:
+              - sns:publish
+            Resource: !Ref SaaSSNSCompletionTopic
+            Principal:
+              Service:
+                - codestar-notifications.amazonaws.com
+      Topics:
+        - !Ref SaaSSNSCompletionTopic
+  SaaSSNSCompletionTopicSubscription:
+    Type: AWS::SNS::Subscription
+    Properties:
+      Endpoint: !GetAtt SamDeployCompleteFunction.Arn
+      Protocol: lambda
+      Region: !Ref AWS::Region
+      TopicArn: !Ref SaaSSNSCompletionTopic
+
+# Amplify App
+  SaaSAmplifyApp:
+    Type: AWS::Amplify::App
+    Properties:
+      Description: SaaS Amplify App
+      Name: SaaS-Amplify-App
+      Repository: !Sub https://git-codecommit.${AWS::Region}.amazonaws.com/v1/repos/${FrontendRepository}
+      IAMServiceRole: !GetAtt SaaSAmplifyRole.Arn
+      EnvironmentVariables: 
+        - Name: Stack
+          Value: !Ref AWS::StackName
+      CustomRules:
+        - Source: /<*>
+          Status: 404-200
+          Target: /index.html
+        - Source: </^[^.]+$|\.(?!(css|gif|ico|jpg|js|png|txt|svg|woff|ttf|map|json)$)([^.]+$)/>
+          Status: 200
+          Target: /index.html
+      BuildSpec: |-
+        version: 1
+        frontend:
+          phases:
+            preBuild:
+              commands:
+                - npm ci
+            build:
+              commands:
+                - echo "VUE_APP_NAME=$Name" >> .env
+                - npm run build
+          artifacts:
+            baseDirectory: dist
+            files:
+              - '**/*'
+          cache:
+            paths:
+              - node_modules/**/*
+      Tags: 
+        - Key: "Stack"
+          Value: !Ref AWS::StackName
+  SaaSAmplifyBranch:
+    Type: AWS::Amplify::Branch
+    Properties:
+      BranchName: master
+      AppId: !GetAtt SaaSAmplifyApp.AppId
+      Description: Master Branch
+      EnableAutoBuild: true
+  SaaSAmplifyRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - amplify.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      Policies:
+        - PolicyName: AmplifyPolicy
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action: "amplify:*"
+                Resource: "*"
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AWSCodeCommitFullAccess
+
+Outputs:
+  SaaSVPCID:
+    Description: VPC ID of SaaS VPC
+    Value: !Ref VPCCFIaaC
+    Export:
+      Name: SaaSVPC
+  SaaSPUBSubnet01ID:
+    Description: SubnetId of the public subnet
+    Value: !Ref PUBSubnet01
+    Export:
+      Name: SaaSPUBSubnet01
+  SaaSPUBSubnet02ID:
+    Description: SubnetId of the public subnet
+    Value: !Ref PUBSubnet02
+    Export:
+      Name: SaaSPUBSubnet02
+  SaaSPUBSubnet03ID:
+    Description: SubnetId of the public subnet
+    Value: !Ref PUBSubnet03
+    Export:
+      Name: SaaSPUBSubnet03
+  SaaSPRVSubnet01ID:
+    Description: SubnetId of the Private subnet
+    Value: !Ref PRVSubnet01
+    Export:
+      Name: SaaSPRVSubnet01
+  SaaSPRVSubnet02ID:
+    Description: SubnetId of the Private subnet
+    Value: !Ref PRVSubnet02
+    Export:
+      Name: SaaSPRVSubnet02
+  SaaSPRVSubnet03ID:
+    Description: SubnetId of the Private subnet
+    Value: !Ref PRVSubnet03
+    Export:
+      Name: SaaSPRVSubnet03
+  SaaSBastionSGID:
+    Description: SaaS Bastion Security Group
+    Value: !Ref SaaSBastionSG
+    Export:
+      Name: SaaSBastionSG
+  SaaSDBEndpoint:
+    Description: SaaS Aurora RDS Endpoint
+    Value: !GetAtt SaaSDatabaseCluster.Endpoint.Address
+    Export:
+      Name: SaaSRDSEndpoint
+  SaaSDBArn:
+    Description: SaaS Aurora RDS Arn
+    Value: !Sub arn:aws:rds:${AWS::Region}:${AWS::AccountId}:cluster:${SaaSDatabaseCluster}
+    Export:
+      Name: SaaSRDSArn
+  SaaSDBSecretsArn:
+    Description: SaaS Database Secrets Arn
+    Value: !Ref SaaSDatabaseSecret
+    Export:
+      Name: SaaSDBSecretsArn
+  SaaSTenantTableDDB:
+    Description: SaaS DynamoDB Tenant Table
+    Value: !Ref SaaSTenantTable
+    Export:
+      Name: SaaSTenantTable
+  SaaSDependencyLayerID:
+    Description: SaaS Dependency Layer
+    Value: !Ref SaaSDependencyLayer
+    Export:
+      Name: SaaSDependencyLayer
+  SaaSHelperLayerID:
+    Description: SaaS Helper Layer
+    Value: !Ref SaaSHelperLayer
+    Export:
+      Name: SaaSHelperLayer
+  SaaSEnrolmentS3Bucket:
+    Description: SaaS Enrolment S3 Bucket
+    Value: !Ref SaaSEnrolmentS3BucketName
+    Export:
+      Name: SaaSEnrolmentS3Bucket
+  SaaSAmplifyAppUrl:
+    Description: SaaS Amplify App Url
+    Value: !GetAtt SaaSAmplifyApp.DefaultDomain
+    Export:
+      Name: SaaSAmplifyAppUrl
+  SaaSRestApiEndpoint:
+    Description: API Gateway Endpoint URL for SaaS Enrolment
+    Value: !Sub https://${SaaSRestApi}.execute-api.${AWS::Region}.amazonaws.com/dev
+    Export:
+      Name: SaaSRestApiEndpoint

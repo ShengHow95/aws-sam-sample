@@ -1,0 +1,83 @@
+openapi: 3.0.1
+info:
+  title: API
+  description: This is a sample OpenAPI for API Gateway resources and method declaration
+  version: 1.0.0
+
+paths:
+  /test:
+    options:
+      responses:
+        200:
+          description: "200 response"
+          headers:
+            Access-Control-Allow-Origin:
+              schema:
+                type: "string"
+            Access-Control-Allow-Methods:
+              schema:
+                type: "string"
+            Access-Control-Allow-Headers:
+              schema:
+                type: "string"
+          content: {}
+      x-amazon-apigateway-integration:
+        responses:
+          default:
+            statusCode: "200"
+            responseParameters:
+              method.response.header.Access-Control-Allow-Methods: "'DELETE,GET,POST,PUT'"
+              method.response.header.Access-Control-Allow-Headers: "'Authorization,Content-Type'"
+              method.response.header.Access-Control-Allow-Origin: "'*'"
+            responseTemplates:
+              application/json: "{}\n"
+        requestTemplates:
+          application/json: "{\n  \"statusCode\" : 200\n}\n"
+        passthroughBehavior: "when_no_match"
+        type: "mock"
+    get:
+      responses:
+        200:
+          description: "200 response"
+          headers:
+            Access-Control-Allow-Origin:
+              schema:
+                type: "string"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Empty"
+      # security:
+      # - AdminCognitoAuth: []
+      x-amazon-apigateway-integration:
+        uri: 
+          Fn::Sub: arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${TestFunction.Arn}/invocations
+        responses:
+          default:
+            statusCode: "200"
+        passthroughBehavior: "when_no_match"
+        httpMethod: "POST"
+        contentHandling: "CONVERT_TO_TEXT"
+        type: "aws_proxy"
+
+# components:
+#   schemas:
+#     Empty:
+#       title: Empty Schema
+#       type: object
+#   securitySchemes:
+#     AdminCognitoAuth:
+#       type: apiKey
+#       name: Authorization
+#       in: header
+#       x-amazon-apigateway-authtype: cognito_user_pools
+#       x-amazon-apigateway-authorizer:
+#         providerARNs:
+#         - Fn::Sub: arn:aws:cognito-idp:${AWS::Region}:${AWS::AccountId}:userpool/${UserPool}
+#         type: cognito_user_pools
+
+# x-amazon-apigateway-gateway-responses:
+#   BAD_REQUEST_BODY:
+#     statusCode: 400
+#     responseTemplates:
+#       application/json: '{ "message": "$context.error.validationErrorString" }'

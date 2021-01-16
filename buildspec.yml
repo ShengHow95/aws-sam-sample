@@ -1,0 +1,94 @@
+version: 0.2
+
+# env:
+  # variables:
+  #   BUCKET_NAME: "tenant-enrolment-dev"
+  #   STACK_NAME: "tenant-enrolment"
+  # parameter-store:
+  #   key: "value"
+  #   key: "value"
+  # secrets-manager:
+  #   key: secret-id:json-key:version-stage:version-id
+  #   key: secret-id:json-key:version-stage:version-id
+  # exported-variables:
+  #   - variable
+  #   - variable
+  # git-credential-helper: yes
+# batch:
+# fast-fail: true
+# build-list:
+# build-matrix:
+# build-graph:
+phases:
+  # install:
+  # If you use the Ubuntu standard image 2.0 or later, you must specify runtime-versions.
+  # If you specify runtime-versions and use an image other than Ubuntu standard image 2.0, the build fails.
+  #   runtime-versions:
+  #     name: version
+  #     name: version
+  #   commands:
+  #     - command
+  #     - command
+  # pre_build:
+  #   commands:
+  #     - command
+  #     - command
+  build:
+    commands:
+      # check and create bucket if not exists
+      - |
+        if aws s3api head-bucket --bucket $BUCKET_NAME 2>/dev/null; 
+        then
+            echo $BUCKET_NAME
+        else
+            aws s3 mb s3://$BUCKET_NAME
+        fi
+      # check and create backend codecommit repo if not exists
+      - |
+        if aws codecommit get-repository --repository-name $BACKEND_REPO | grep -w $BACKEND_REPO
+        then
+            echo $BACKEND_REPO
+        else
+            aws codecommit create-repository --repository-name $BACKEND_REPO
+        fi
+      # check and create frontend codecommit repo if not exists
+      - |
+        if aws codecommit get-repository --repository-name $FRONTEND_REPO | grep -w $FRONTEND_REPO
+        then
+            echo $FRONTEND_REPO
+        else
+            aws codecommit create-repository --repository-name $FRONTEND_REPO
+        fi
+      # build dependencies (if any) 
+      - sam build
+      # put openapi file into s3 bucket
+      - aws s3api put-object --bucket $BUCKET_NAME --key $STACK_NAME/openapi-spec.yaml --body ./openapi-spec.yaml
+      # package sam template (to be compatible with cloudformation template) 
+      # then upload required files (e.g. dependencies) to s3 bucket
+      - sam package --output-template-file packaged.yaml --s3-bucket $BUCKET_NAME --s3-prefix ${STACK_NAME}
+      # put packaged.yaml file to s3 bucket 
+      - aws s3api put-object --bucket $BUCKET_NAME --key $STACK_NAME/packaged.yaml --body ./packaged.yaml
+      # deploy packaged.yaml file and upload to s3 bucket
+      - sam deploy --template-file packaged.yaml --s3-bucket $BUCKET_NAME --s3-prefix ${STACK_NAME} --stack-name $STACK_NAME --capabilities CAPABILITY_IAM --parameter-overrides SaaSEnrolmentS3BucketName=${BUCKET_NAME} BackendRepository=${BACKEND_REPO} FrontendRepository=${FRONTEND_REPO}
+  # post_build:
+  #   commands:
+  #     - command
+  #     - command
+# reports:
+# report-name-or-arn:
+# files:
+#   - location
+#   - location
+# base-directory: location
+# discard-paths: yes
+# file-format: JunitXml | CucumberJson
+# artifacts:
+# files:
+#   - location
+#   - location
+# name: $(date +%Y-%m-%d)
+# discard-paths: yes
+# base-directory: location
+# cache:
+# paths:
+#   - paths
